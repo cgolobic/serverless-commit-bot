@@ -39,7 +39,7 @@ function _getJwtToken(keyPath) {
   let payload = {
     iat: issueSeconds,
     exp: expirySeconds,
-    iss: +process.env['IssuerId']
+    iss: +process.env['ISSUER_ID']
   };
   return jwt.sign(payload, pemCert, { algorithm: 'RS256' });
 }
