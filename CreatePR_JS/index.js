@@ -7,7 +7,11 @@ const USER_AGENT = 'serverless-pr-bot';
 const ACCEPT = 'application/vnd.github.machine-man-preview+json';
 
 module.exports = function (context, req) {
-  let token = _getJwtToken();
+  if (!process.env['KEY_FILE_PATH']) {
+    _returnError(context, 'App setting "KEY_FILE_PATH" not defined');
+    return;
+  }
+  let token = _getJwtToken(process.env['KEY_FILE_PATH']);
   _getInstallations(token, (installations) => {
     let installation = installations.find((i) => i.account.login === req.params.owner);
     if (!installation) {
@@ -28,8 +32,8 @@ module.exports = function (context, req) {
   });
 }
 
-function _getJwtToken() {
-  let pemCert = fs.readFileSync('./private-key.pem');
+function _getJwtToken(keyPath) {
+  let pemCert = fs.readFileSync(keyPath);
   let issueSeconds = Math.floor(Date.now() / 1000);
   let expirySeconds = issueSeconds + 60;
   let payload = {
