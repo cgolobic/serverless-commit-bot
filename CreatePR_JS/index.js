@@ -3,21 +3,29 @@ const jwt = require('jsonwebtoken');
 const https = require('https');
 const base64 = require('js-base64').Base64;
 
+const USER_AGENT = 'serverless-pr-bot';
+const ACCEPT = 'application/vnd.github.machine-man-preview+json';
+
 module.exports = function (context, req) {
   let token = _getJwtToken();
   _getInstallations(token, (installations) => {
-    _getAccessToken(installations[0].id, token, (token) => {
-      console.log(token);
-      _getBlobShaForFile('README.md', token, (data) => {
-        _updateFile('README.md', token, data.sha, (data2) => console.log(data2));
+    let installation = installations.find((i) => i.account.login === req.params.owner);
+    if (!installation) {
+      _returnError(context, `Installation not found for owner "${req.params.owner}"`);
+      return;
+    }
+    _getAccessToken(installation.id, token, (token) => {
+      _getBlobShaForFile(req.params.owner, req.params.repo, 'README.md', token, (data) => {
+        _updateFile(req.params.owner, req.params.repo, 'README.md', token, data.sha, (commitData) => {
+          context.res = {
+            status: 200,
+            body: JSON.stringify(commitData)
+          };
+          context.done();
+        });
       });
     });
   });
-  context.res = {
-    // status: 200, /* Defaults to 200 */
-    body: "Hello " + req.params.name
-  };
-  context.done();
 }
 
 function _getJwtToken() {
@@ -37,8 +45,8 @@ function _getInstallations(jwt, callback) {
     hostname: 'api.github.com',
     path: '/app/installations',
     headers: {
-      'User-Agent': 'serverless-pr-bot',
-      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'User-Agent': USER_AGENT,
+      'Accept': ACCEPT,
       'Authorization': `Bearer ${jwt}`
     }
   };
@@ -61,8 +69,8 @@ function _getAccessToken(installationId, jwt, callback) {
     path: `/installations/${installationId}/access_tokens`,
     method: 'POST',
     headers: {
-      'User-Agent': 'serverless-pr-bot',
-      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'User-Agent': USER_AGENT,
+      'Accept': ACCEPT,
       'Authorization': `Bearer ${jwt}`
     }
   };
@@ -78,13 +86,13 @@ function _getAccessToken(installationId, jwt, callback) {
   tokenReq.end();
 }
 
-function _getBlobShaForFile(filePath, token, callback) {
+function _getBlobShaForFile(owner, repo, filePath, token, callback) {
   let reqOptions = {
     hostname: 'api.github.com',
-    path: `/repos/cgolobic/gh-apps-test-repo/contents/${filePath}`,
+    path: `/repos/${owner}/${repo}/contents/${filePath}`,
     headers: {
-      'User-Agent': 'serverless-pr-bot',
-      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'User-Agent': USER_AGENT,
+      'Accept': ACCEPT,
       'Authorization': `token ${token}`
     }
   };
@@ -101,7 +109,7 @@ function _getBlobShaForFile(filePath, token, callback) {
   }); 
 }
 
-function _updateFile(filePath, token, blobSha, callback) {
+function _updateFile(owner, repo, filePath, token, blobSha, callback) {
   let putParams = JSON.stringify({
     message: 'Updating the readme',
     sha: blobSha,
@@ -109,11 +117,11 @@ function _updateFile(filePath, token, blobSha, callback) {
   });
   let reqOptions = {
     hostname: 'api.github.com',
-    path: `/repos/cgolobic/gh-apps-test-repo/contents/${filePath}`,
+    path: `/repos/${owner}/${repo}/contents/${filePath}`,
     method: 'PUT',
     headers: {
-      'User-Agent': 'serverless-pr-bot',
-      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'User-Agent': USER_AGENT,
+      'Accept': ACCEPT,
       'Authorization': `token ${token}`
     }
   };
@@ -130,4 +138,12 @@ function _updateFile(filePath, token, blobSha, callback) {
   }); 
   req.write(putParams);
   req.end();
+}
+
+function _returnError(context, message) {
+  context.res = {
+    status: 400,
+    body: `Error: ${message}`
+  };
+  context.done();
 }
