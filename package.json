@@ -9,6 +9,7 @@
   "author": "cgolobic",
   "license": "MIT",
   "dependencies": {
+    "js-base64": "^2.4.3",
     "jsonwebtoken": "^8.1.1"
   }
 }

@@ -1,8 +1,26 @@
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const https = require('https');
+const base64 = require('js-base64').Base64;
+
 module.exports = function (context, req) {
-  context.log('JavaScript HTTP trigger function processed a request.');
+  let token = _getJwtToken();
+  _getInstallations(token, (installations) => {
+    _getAccessToken(installations[0].id, token, (token) => {
+      console.log(token);
+      _getBlobShaForFile('README.md', token, (data) => {
+        _updateFile('README.md', token, data.sha, (data2) => console.log(data2));
+      });
+    });
+  });
+  context.res = {
+    // status: 200, /* Defaults to 200 */
+    body: "Hello " + req.params.name
+  };
+  context.done();
+}
+
+function _getJwtToken() {
   let pemCert = fs.readFileSync('./private-key.pem');
   let issueSeconds = Math.floor(Date.now() / 1000);
   let expirySeconds = issueSeconds + 60;
@@ -11,58 +29,105 @@ module.exports = function (context, req) {
     exp: expirySeconds,
     iss: +process.env['IssuerId']
   };
-  let token = jwt.sign(payload, pemCert, { algorithm: 'RS256' }, (err, token) => {
-    console.log(err, token);
-    if (err === null) {
-      let reqOptions = {
-        hostname: 'api.github.com',
-        path: '/app/installations',
-        headers: {
-          'User-Agent': 'serverless-pr-bot',
-          'Accept': 'application/vnd.github.machine-man-preview+json',
-          'Authorization': `Bearer ${token}`
-        }
-      }
-      const req = https.get(reqOptions, (res) => {
-        console.log(res.statusCode);
-        res.setEncoding('utf8');
-        let fullBody = '';
-        res.on('data', (body) => {
-          fullBody += body;
-        });
-        res.on('end', () => {
-          let parsedData = JSON.parse(fullBody);
-          let installId = parsedData[0].id;
-          console.log(installId);
-          let tokenOptions = {
-            hostname: 'api.github.com',
-            path: `/installations/${installId}/access_tokens`,
-            method: 'POST',
-            headers: {
-              'User-Agent': 'serverless-pr-bot',
-              'Accept': 'application/vnd.github.machine-man-preview+json',
-              'Authorization': `Bearer ${token}`
-            }
-          };
-          const tokenReq = https.request(tokenOptions, (tokenRes) => {
-            tokenRes.setEncoding('utf8');
-            let tokenData = '';
-            tokenRes.on('data', (data) => tokenData += data);
-            tokenRes.on('end', () => {
-              let jsonTokenData = JSON.parse(tokenData);
-              let token = jsonTokenData.token;
-            });
-          });
+  return jwt.sign(payload, pemCert, { algorithm: 'RS256' });
+}
 
-          tokenReq.end();
-        });
-      });
+function _getInstallations(jwt, callback) {
+  let reqOptions = {
+    hostname: 'api.github.com',
+    path: '/app/installations',
+    headers: {
+      'User-Agent': 'serverless-pr-bot',
+      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'Authorization': `Bearer ${jwt}`
     }
-  });
-
-  context.res = {
-    // status: 200, /* Defaults to 200 */
-    body: "Hello " + req.params.name
   };
-  context.done();
-};
+  const req = https.get(reqOptions, (res) => {
+    res.setEncoding('utf8');
+    let fullBody = '';
+    res.on('data', (body) => {
+      fullBody += body;
+    });
+    res.on('end', () => {
+      let installations = JSON.parse(fullBody);
+      callback(installations);
+    });
+  });
+}
+
+function _getAccessToken(installationId, jwt, callback) {
+  let options = {
+    hostname: 'api.github.com',
+    path: `/installations/${installationId}/access_tokens`,
+    method: 'POST',
+    headers: {
+      'User-Agent': 'serverless-pr-bot',
+      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'Authorization': `Bearer ${jwt}`
+    }
+  };
+  const tokenReq = https.request(options, (res) => {
+    res.setEncoding('utf8');
+    let fullBody = '';
+    res.on('data', (data) => fullBody += data);
+    res.on('end', () => {
+      let token = JSON.parse(fullBody).token;
+      callback(token);
+    });
+  });
+  tokenReq.end();
+}
+
+function _getBlobShaForFile(filePath, token, callback) {
+  let reqOptions = {
+    hostname: 'api.github.com',
+    path: `/repos/cgolobic/gh-apps-test-repo/contents/${filePath}`,
+    headers: {
+      'User-Agent': 'serverless-pr-bot',
+      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'Authorization': `token ${token}`
+    }
+  };
+  const req = https.get(reqOptions, (res) => {
+    res.setEncoding('utf8');
+    let fullBody = '';
+    res.on('data', (body) => {
+      fullBody += body;
+    });
+    res.on('end', () => {
+      let fileData = JSON.parse(fullBody);
+      callback(fileData);
+    });
+  }); 
+}
+
+function _updateFile(filePath, token, blobSha, callback) {
+  let putParams = JSON.stringify({
+    message: 'Updating the readme',
+    sha: blobSha,
+    content: base64.encode('# gh-apps-test-repo')
+  });
+  let reqOptions = {
+    hostname: 'api.github.com',
+    path: `/repos/cgolobic/gh-apps-test-repo/contents/${filePath}`,
+    method: 'PUT',
+    headers: {
+      'User-Agent': 'serverless-pr-bot',
+      'Accept': 'application/vnd.github.machine-man-preview+json',
+      'Authorization': `token ${token}`
+    }
+  };
+  const req = https.request(reqOptions, (res) => {
+    res.setEncoding('utf8');
+    let fullBody = '';
+    res.on('data', (body) => {
+      fullBody += body;
+    });
+    res.on('end', () => {
+      let fileData = JSON.parse(fullBody);
+      callback(fileData);
+    });
+  }); 
+  req.write(putParams);
+  req.end();
+}
