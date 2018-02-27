@@ -2,31 +2,41 @@ const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const https = require('https');
 const base64 = require('js-base64').Base64;
-
-const USER_AGENT = 'serverless-commit-bot';
+const gitHash = require('./git-hash');
 const ACCEPT = 'application/vnd.github.machine-man-preview+json';
 
-module.exports = function (context, req) {
-  if (!process.env['KEY_FILE_PATH']) {
-    _returnError(context, 'App setting "KEY_FILE_PATH" not defined');
-    return;
+module.exports = function GitHubApiRequest(config, callback) {
+  if (!config.keyFilePath) {
+    throw Error('config.keyFilePath was not provided');
   }
-  let token = _getJwtToken(process.env['KEY_FILE_PATH']);
-  _getInstallations(token, (installations) => {
-    let installation = installations.find((i) => i.account.login === req.params.owner);
-    if (!installation) {
-      _returnError(context, `Installation not found for owner "${req.params.owner}"`);
-      return;
+  let token = _getJwtToken(config.keyFilePath);
+  _getInstallations(token, config.userAgent, (installations) => {
+    if (!config.owner) {
+      throw Error('config.owner was not provided');
     }
-    _getAccessToken(installation.id, token, (token) => {
-      _getBlobShaForFile(req.params.owner, req.params.repo, 'README.md', token, (data) => {
-        _updateFile(req.params.owner, req.params.repo, 'README.md', token, data.sha, (commitData) => {
-          context.res = {
-            status: 200,
-            body: JSON.stringify(commitData)
-          };
-          context.done();
-        });
+    //TODO cache this if config specifies...
+    let installation = installations.find((i) => i.account.login === config.owner);
+    if (!installation) {
+      throw Error(`Installation not found for owner "${config.owner}"`);
+    }
+    _getAccessToken(installation.id, token, config.userAgent, (accessToken) => {
+      //TODO error handling, caching...
+      if (!config.repo) {
+        throw Error('config.repo was not provided');
+      }
+      _getBlobShaForFile(config.owner, config.repo, config.filePath, accessToken, config.userAgent, (metadata) => {
+        let needGitUpdate = false;
+        if (metadata.sha) {
+          let newContentHash = gitHash(config.content, 'blob');
+          needGitUpdate = newContentHash !== metadata.sha;
+        }
+        if (needGitUpdate) {
+          _updateOrCreateFile(config.owner, config.repo, config.filePath, accessToken, metadata.sha, config.content, config.commitMessage, config.userAgent, (commitResponse) => {
+            callback(commitResponse);
+          });
+        } else {
+          callback({});
+        }
       });
     });
   });
@@ -44,12 +54,12 @@ function _getJwtToken(keyPath) {
   return jwt.sign(payload, pemCert, { algorithm: 'RS256' });
 }
 
-function _getInstallations(jwt, callback) {
+function _getInstallations(jwt, userAgent, callback) {
   let reqOptions = {
     hostname: 'api.github.com',
     path: '/app/installations',
     headers: {
-      'User-Agent': USER_AGENT,
+      'User-Agent': userAgent,
       'Accept': ACCEPT,
       'Authorization': `Bearer ${jwt}`
     }
@@ -67,13 +77,13 @@ function _getInstallations(jwt, callback) {
   });
 }
 
-function _getAccessToken(installationId, jwt, callback) {
+function _getAccessToken(installationId, jwt, userAgent, callback) {
   let options = {
     hostname: 'api.github.com',
     path: `/installations/${installationId}/access_tokens`,
     method: 'POST',
     headers: {
-      'User-Agent': USER_AGENT,
+      'User-Agent': userAgent,
       'Accept': ACCEPT,
       'Authorization': `Bearer ${jwt}`
     }
@@ -90,16 +100,18 @@ function _getAccessToken(installationId, jwt, callback) {
   tokenReq.end();
 }
 
-function _getBlobShaForFile(owner, repo, filePath, token, callback) {
+function _getBlobShaForFile(owner, repo, filePath, token, userAgent, callback) {
+  // gets more than just the sha, could use GraphQL api to just get what we need...
   let reqOptions = {
     hostname: 'api.github.com',
     path: `/repos/${owner}/${repo}/contents/${filePath}`,
     headers: {
-      'User-Agent': USER_AGENT,
+      'User-Agent': userAgent,
       'Accept': ACCEPT,
       'Authorization': `token ${token}`
     }
   };
+  // TODO: handle response for new file better
   const req = https.get(reqOptions, (res) => {
     res.setEncoding('utf8');
     let fullBody = '';
@@ -113,18 +125,18 @@ function _getBlobShaForFile(owner, repo, filePath, token, callback) {
   }); 
 }
 
-function _updateFile(owner, repo, filePath, token, blobSha, callback) {
+function _updateOrCreateFile(owner, repo, filePath, token, blobSha, content, message, userAgent, callback) {
   let putParams = JSON.stringify({
-    message: 'Updating the readme',
+    message: message,
     sha: blobSha,
-    content: base64.encode('# gh-apps-test-repo')
+    content: base64.encode(content)
   });
   let reqOptions = {
     hostname: 'api.github.com',
     path: `/repos/${owner}/${repo}/contents/${filePath}`,
     method: 'PUT',
     headers: {
-      'User-Agent': USER_AGENT,
+      'User-Agent': userAgent,
       'Accept': ACCEPT,
       'Authorization': `token ${token}`
     }
@@ -142,12 +154,4 @@ function _updateFile(owner, repo, filePath, token, blobSha, callback) {
   }); 
   req.write(putParams);
   req.end();
-}
-
-function _returnError(context, message) {
-  context.res = {
-    status: 400,
-    body: `Error: ${message}`
-  };
-  context.done();
 }

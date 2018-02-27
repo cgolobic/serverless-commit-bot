@@ -6,9 +6,9 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "HttpTriggerJS/{owner}/{repo}",
+      "route": "commit/{owner}/{repo}",
       "methods": [
-        "get"
+        "post"
       ]
     },
     {
