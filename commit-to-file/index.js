@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const https = require('https');
 const base64 = require('js-base64').Base64;
 
-const USER_AGENT = 'serverless-pr-bot';
+const USER_AGENT = 'serverless-commit-bot';
 const ACCEPT = 'application/vnd.github.machine-man-preview+json';
 
 module.exports = function (context, req) {
