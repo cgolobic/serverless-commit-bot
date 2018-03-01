@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const https = require('https');
 const base64 = require('js-base64').Base64;
 const gitHash = require('./git-hash');
+const queries = require('../queries');
 const ACCEPT = 'application/vnd.github.machine-man-preview+json';
 const HOSTNAME = 'api.github.com';
 
@@ -25,20 +26,26 @@ module.exports = async function GitHubApiRequest(config, callback) {
   if (!config.repo) {
     throw Error('config.repo was not provided');
   }
-      _getBlobShaForFile(config.owner, config.repo, config.filePath, accessToken, config.userAgent, (metadata) => {
-        let needGitUpdate = false;
-        if (metadata.sha) {
-          let newContentHash = gitHash(config.content, 'blob');
-          needGitUpdate = newContentHash !== metadata.sha;
-        }
-        if (needGitUpdate) {
-          _updateOrCreateFile(config.owner, config.repo, config.filePath, accessToken, metadata.sha, config.content, config.commitMessage, config.userAgent, (commitResponse) => {
-            callback(commitResponse);
-          });
-        } else {
-          callback({});
-        }
-      });
+  let gqlParams = {
+    repository: config.repo,
+    owner: config.owner,
+    root: config.filePath
+  };
+  let gqlResp = await _graphQLQuery(queries.GET_TREE, gqlParams, accessToken, config.userAgent);
+      // _getBlobShaForFile(config.owner, config.repo, config.filePath, accessToken, config.userAgent, (metadata) => {
+      //   let needGitUpdate = false;
+      //   if (metadata.sha) {
+      //     let newContentHash = gitHash(config.content, 'blob');
+      //     needGitUpdate = newContentHash !== metadata.sha;
+      //   }
+      //   if (needGitUpdate) {
+      //     _updateOrCreateFile(config.owner, config.repo, config.filePath, accessToken, metadata.sha, config.content, config.commitMessage, config.userAgent, (commitResponse) => {
+      //       callback(commitResponse);
+      //     });
+      //   } else {
+      //     callback({});
+      //   }
+      // });
 }
 
 function _getJwtToken(keyPath) {
@@ -143,6 +150,29 @@ function _updateOrCreateFile(owner, repo, filePath, token, blobSha, content, mes
   }); 
   req.write(putParams);
   req.end();
+}
+
+async function _graphQLQuery(query, params, token, userAgent) {
+  let postBody = JSON.stringify({
+    query
+  });
+  let options = {
+    hostname: HOSTNAME,
+    path: `/graphql`,
+    method: 'POST',
+    headers: {
+      'User-Agent': userAgent,
+      //'Accept': ACCEPT,
+      'Authorization': `token ${token}`
+    }
+  };
+  return new Promise((resolve, reject) => {
+    let req = https.request(options, (response) => {
+      _getResponseJson(response, resolve, reject);
+    });
+    req.write(postBody);
+    req.end();
+  });
 }
 
 function _getResponseJson(response, resolve, reject) {

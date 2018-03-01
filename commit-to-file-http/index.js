@@ -17,6 +17,7 @@ module.exports = function (context, req) {
         repo: req.params.repo,
         userAgent: config('USER_AGENT'),
         filePath: file.path,
+        fileName: file.name,
         content: sanitizedContent,
         commitMessage: req.body.message
       };

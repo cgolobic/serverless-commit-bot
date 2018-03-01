@@ -18,7 +18,8 @@ module.exports = function (context, documents) {
         owner: config('GITHUB_OWNER'),
         repo: config('GITHUB_REPO'),
         userAgent: config('USER_AGENT'),
-        filePath: `${config('PATH_PATTERN')}/${document.id}.json`,
+        fileName: `${document.id}.json`,
+        filePath: `${config('PATH_PATTERN')}`,
         content: sanitizedContent,
         commitMessage: config('COMMIT_MESSAGE')
       };
