@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start:vscode": "func host start --debug vscode",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "cgolobic",

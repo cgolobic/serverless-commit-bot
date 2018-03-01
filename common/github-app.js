@@ -4,26 +4,27 @@ const https = require('https');
 const base64 = require('js-base64').Base64;
 const gitHash = require('./git-hash');
 const ACCEPT = 'application/vnd.github.machine-man-preview+json';
+const HOSTNAME = 'api.github.com';
 
-module.exports = function GitHubApiRequest(config, callback) {
+module.exports = async function GitHubApiRequest(config, callback) {
   if (!config.keyFilePath) {
     throw Error('config.keyFilePath was not provided');
   }
   let token = _getJwtToken(config.keyFilePath);
-  _getInstallations(token, config.userAgent, (installations) => {
-    if (!config.owner) {
-      throw Error('config.owner was not provided');
-    }
-    //TODO cache this if config specifies...
-    let installation = installations.find((i) => i.account.login === config.owner);
-    if (!installation) {
-      throw Error(`Installation not found for owner "${config.owner}"`);
-    }
-    _getAccessToken(installation.id, token, config.userAgent, (accessToken) => {
-      //TODO error handling, caching...
-      if (!config.repo) {
-        throw Error('config.repo was not provided');
-      }
+  let installations = await _getInstallations(token, config.userAgent);
+  if (!config.owner) {
+    throw Error('config.owner was not provided');
+  }
+  //TODO cache this if config specifies...
+  let installation = installations.find((i) => i.account.login === config.owner);
+  if (!installation) {
+    throw Error(`Installation not found for owner "${config.owner}"`);
+  }
+  let accessToken = (await _getAccessToken(installation.id, token, config.userAgent)).token;
+  //TODO error handling, caching...
+  if (!config.repo) {
+    throw Error('config.repo was not provided');
+  }
       _getBlobShaForFile(config.owner, config.repo, config.filePath, accessToken, config.userAgent, (metadata) => {
         let needGitUpdate = false;
         if (metadata.sha) {
@@ -38,8 +39,6 @@ module.exports = function GitHubApiRequest(config, callback) {
           callback({});
         }
       });
-    });
-  });
 }
 
 function _getJwtToken(keyPath) {
@@ -54,9 +53,9 @@ function _getJwtToken(keyPath) {
   return jwt.sign(payload, pemCert, { algorithm: 'RS256' });
 }
 
-function _getInstallations(jwt, userAgent, callback) {
-  let reqOptions = {
-    hostname: 'api.github.com',
+async function _getInstallations(jwt, userAgent) {
+  let options = {
+    hostname: HOSTNAME,
     path: '/app/installations',
     headers: {
       'User-Agent': userAgent,
@@ -64,22 +63,16 @@ function _getInstallations(jwt, userAgent, callback) {
       'Authorization': `Bearer ${jwt}`
     }
   };
-  const req = https.get(reqOptions, (res) => {
-    res.setEncoding('utf8');
-    let fullBody = '';
-    res.on('data', (body) => {
-      fullBody += body;
+  return new Promise((resolve, reject) => {
+    https.get(options, (response) => {
+      _getResponseJson(response, resolve, reject);
     });
-    res.on('end', () => {
-      let installations = JSON.parse(fullBody);
-      callback(installations);
-    });
-  });
+  });I
 }
 
-function _getAccessToken(installationId, jwt, userAgent, callback) {
+async function _getAccessToken(installationId, jwt, userAgent) {
   let options = {
-    hostname: 'api.github.com',
+    hostname: HOSTNAME,
     path: `/installations/${installationId}/access_tokens`,
     method: 'POST',
     headers: {
@@ -88,16 +81,12 @@ function _getAccessToken(installationId, jwt, userAgent, callback) {
       'Authorization': `Bearer ${jwt}`
     }
   };
-  const tokenReq = https.request(options, (res) => {
-    res.setEncoding('utf8');
-    let fullBody = '';
-    res.on('data', (data) => fullBody += data);
-    res.on('end', () => {
-      let token = JSON.parse(fullBody).token;
-      callback(token);
+  return new Promise((resolve, reject) => {
+    let req = https.request(options, (response) => {
+      _getResponseJson(response, resolve, reject);
     });
+    req.end();
   });
-  tokenReq.end();
 }
 
 function _getBlobShaForFile(owner, repo, filePath, token, userAgent, callback) {
@@ -154,4 +143,12 @@ function _updateOrCreateFile(owner, repo, filePath, token, blobSha, content, mes
   }); 
   req.write(putParams);
   req.end();
+}
+
+function _getResponseJson(response, resolve, reject) {
+  response.setEncoding('utf8');
+  let fullBody = '';
+  response.on('data', (body) => fullBody += body);
+  response.on('end', () => resolve(JSON.parse(fullBody)));
+  response.on('error', (error) => reject(error));
 }
